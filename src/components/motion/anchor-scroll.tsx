@@ -104,8 +104,8 @@ export function AnchorScroll() {
         return false;
       }
 
-      lenis.resize();
-      lenis.scrollTo(target, {
+      lenis!.resize();
+      lenis!.scrollTo(target, {
         offset: MOTION.headerOffset,
         immediate,
         duration: prefersReducedMotion() ? 0 : MOTION.lenisDuration,
