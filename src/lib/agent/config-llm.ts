@@ -1,8 +1,23 @@
+import {
+  DEFAULT_LLM_MODEL,
+  resolveLlmModel,
+  type LlmModelInfo,
+} from "@/lib/agent/llm-models";
+
 export type LlmConfig = {
   apiKey: string;
   baseUrl: string;
   model: string;
+  temperature: number;
+  modelInfo: LlmModelInfo;
 };
+
+function parseTemperature(raw: string | undefined, fallback: number) {
+  if (raw == null || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(1, Math.max(0, n));
+}
 
 export function getLlmConfig(): LlmConfig | null {
   const apiKey =
@@ -14,15 +29,25 @@ export function getLlmConfig(): LlmConfig | null {
     return null;
   }
 
+  const modelInfo = resolveLlmModel(process.env.GEMINI_MODEL);
+  const temperature = parseTemperature(
+    process.env.GEMINI_TEMPERATURE,
+    0.25,
+  );
+
   return {
     apiKey,
     baseUrl: (
       process.env.GEMINI_BASE_URL ??
       "https://generativelanguage.googleapis.com/v1beta"
     ).replace(/\/$/, ""),
-    model: process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash",
+    model: modelInfo.id,
+    temperature,
+    modelInfo,
   };
 }
+
+export { DEFAULT_LLM_MODEL };
 
 type ChatTurn = { role: "system" | "user" | "assistant"; content: string };
 
@@ -64,7 +89,7 @@ function toGeminiPayload(messages: ChatTurn[]) {
   }
 
   systemParts.push(
-    'Відповідай JSON: {"text": string, "propertySlugs": string[], "handoff": boolean, "needsContact": boolean}. text: відповідь клієнту мовою клієнта (uk або ru), без тире і лапок. Ніколи не стверджуй, що заявку вже надіслано.',
+    'Відповідай JSON: {"text": string, "propertySlugs": string[], "handoff": boolean, "needsContact": boolean}. text: відповідь клієнту мовою клієнта (uk або en), без тире і лапок. Ніколи не стверджуй, що заявку вже надіслано, передано брокеру чи зібрано для телефону — це робить лише бекенд після повних даних.',
   );
 
   return {
@@ -109,6 +134,37 @@ function parseModelJson(raw: string): LlmJson | null {
   }
 }
 
+function generationConfigFor(config: LlmConfig) {
+  const base: Record<string, unknown> = {
+    temperature: config.temperature,
+    responseMimeType: "application/json",
+    responseSchema: {
+      type: "OBJECT",
+      properties: {
+        text: { type: "STRING" },
+        propertySlugs: {
+          type: "ARRAY",
+          items: { type: "STRING" },
+        },
+        handoff: { type: "BOOLEAN" },
+        needsContact: { type: "BOOLEAN" },
+      },
+      required: ["text"],
+    },
+  };
+
+  if (config.modelInfo.thinking === "none") {
+    return base;
+  }
+
+  return {
+    ...base,
+    thinkingConfig: {
+      thinkingLevel: config.modelInfo.thinking,
+    },
+  };
+}
+
 export async function completeChat(
   config: LlmConfig,
   messages: ChatTurn[],
@@ -135,26 +191,7 @@ export async function completeChat(
             parts: [{ text: systemInstruction }],
           },
           contents,
-          generationConfig: {
-            temperature: 0.55,
-            thinkingConfig: {
-              thinkingLevel: "minimal",
-            },
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: "OBJECT",
-              properties: {
-                text: { type: "STRING" },
-                propertySlugs: {
-                  type: "ARRAY",
-                  items: { type: "STRING" },
-                },
-                handoff: { type: "BOOLEAN" },
-                needsContact: { type: "BOOLEAN" },
-              },
-              required: ["text"],
-            },
-          },
+          generationConfig: generationConfigFor(config),
         }),
         signal: controller.signal,
       },
@@ -164,6 +201,7 @@ export async function completeChat(
       const body = await response.text();
       console.error("agent_llm_http", {
         status: response.status,
+        model: config.model,
         body: body.slice(0, 500),
       });
       return null;
@@ -178,6 +216,7 @@ export async function completeChat(
   } catch (error) {
     console.error("agent_llm_failed", {
       reason: error instanceof Error ? error.name : "unknown",
+      model: config.model,
     });
     return null;
   } finally {

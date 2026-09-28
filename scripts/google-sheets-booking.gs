@@ -1,16 +1,22 @@
 /**
  * Google Apps Script for spreadsheet "Rag агенты"
- * Sheet: Лист2
+ * Default sheet: Лист2
  *
- * Columns:
- * createdAt | name | phone | service | doctor | date | time | slotLabel | concern | status | timezone | source
+ * Columns (order matters — append by position):
+ * createdAt | name | phone | format | details | date | time | when | summary | status | timezone | source
+ *
+ * Legacy JSON keys still accepted: service→format, doctor→details, slotLabel→when, concern→summary
  *
  * 1. Open the sheet → Extensions → Apps Script
- * 2. Paste this file, set SECRET
+ * 2. Paste this file, set SECRET to match GOOGLE_SHEETS_WEBHOOK_SECRET
  * 3. Deploy → New deployment → Web app
  *    - Execute as: Me
  *    - Who has access: Anyone
- * 4. Put URL + SECRET into NOVA .env.local
+ * 4. Put URL + SECRET into .env.local
+ *
+ * Safe header rename in an EXISTING sheet:
+ * You may rename row-1 headers in Google Sheets UI — the script writes by column index,
+ * not by header title. After renaming, keep the same column order.
  */
 
 var SECRET = "lume_rag_2026";
@@ -28,16 +34,21 @@ function doPost(e) {
     var sheet = ss.getSheetByName(sheetName) || ss.getSheets()[0];
     ensureHeader_(sheet);
 
+    var format = body.format || body.service || "";
+    var details = body.details || body.doctor || "";
+    var when = body.when || body.slotLabel || "";
+    var summary = body.summary || body.concern || "";
+
     sheet.appendRow([
       body.createdAt || new Date().toISOString(),
       body.name || "",
       String(body.phone || ""),
-      body.service || "",
-      body.doctor || "",
+      format,
+      details,
       body.date || "",
       body.time || "",
-      body.slotLabel || "",
-      body.concern || "",
+      when,
+      summary,
       body.status || "new",
       body.timezone || "Europe/Kyiv",
       body.source || "",
@@ -69,12 +80,12 @@ function ensureHeader_(sheet) {
     "createdAt",
     "name",
     "phone",
-    "service",
-    "doctor",
+    "format",
+    "details",
     "date",
     "time",
-    "slotLabel",
-    "concern",
+    "when",
+    "summary",
     "status",
     "timezone",
     "source",

@@ -1,15 +1,23 @@
 export type LeadSource = "chat" | "form" | "chat-inline";
 
-/** Payload matches Rag агенты / Лист2 columns. */
+/** Payload for Rag агенты sheet. Sends both new and legacy keys for Apps Script. */
 export type SheetLeadPayload = {
   source: LeadSource;
   name: string;
   phone: string;
+  /** Meeting format label (also sent as legacy `service`). */
+  format?: string | null;
   service?: string | null;
+  /** Goal / district / type notes (also sent as legacy `doctor`). */
+  details?: string | null;
   doctor?: string | null;
   date?: string | null;
   time?: string | null;
+  /** Human-readable when (also sent as legacy `slotLabel`). */
+  when?: string | null;
   slotLabel?: string | null;
+  /** Lead summary (also sent as legacy `concern`). */
+  summary?: string | null;
   concern?: string | null;
   status?: string;
   sheetName?: string;
@@ -55,12 +63,18 @@ export async function appendLeadToGoogleSheet(
         source: payload.source,
         name: payload.name,
         phone: payload.phone,
-        service: payload.service ?? "",
-        doctor: payload.doctor ?? "",
+        // New names
+        format: payload.format ?? payload.service ?? "",
+        details: payload.details ?? payload.doctor ?? "",
+        when: payload.when ?? payload.slotLabel ?? "",
+        summary: payload.summary ?? payload.concern ?? "",
+        // Legacy aliases (older Apps Script deployments)
+        service: payload.service ?? payload.format ?? "",
+        doctor: payload.doctor ?? payload.details ?? "",
+        slotLabel: payload.slotLabel ?? payload.when ?? "",
+        concern: payload.concern ?? payload.summary ?? "",
         date: payload.date ?? "",
         time: payload.time ?? "",
-        slotLabel: payload.slotLabel ?? "",
-        concern: payload.concern ?? "",
         status: payload.status || "new",
       }),
       cache: "no-store",

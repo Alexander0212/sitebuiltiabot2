@@ -59,46 +59,99 @@ export function listingToSuggestion(listing: CatalogListing): PropertySuggestion
 }
 
 export function formatListingBrief(listing: CatalogListing) {
-  return `${listing.slug} | ${listing.headline} | ${formatUsdSymbol(listing.priceUsd)} | ${listing.bedrooms} спальні | ${listing.areaM2} м² | ${listing.district} | поверх ${listing.floorNumber}/${listing.floorsTotal} | /objects/${listing.slug} | ${listing.why}`;
+  const level =
+    listing.type === "house"
+      ? "будинок"
+      : `поверх ${listing.floorNumber}/${listing.floorsTotal}`;
+  return `${listing.headline}: ${formatUsdSymbol(listing.priceUsd)}, ${listing.bedrooms} спальні, ${listing.areaM2} м², ${level}. ${listing.why}`;
 }
 
+/** Facts for the model. Client text must not paste raw /objects/slug paths. */
 export function formatListingBlock(listing: CatalogListing) {
-  const living =
-    listing.livingAreaM2 == null
-      ? "житлова площа: немає даних"
-      : `житлова площа: ${listing.livingAreaM2} м²`;
-  const condition = listing.condition ?? "стан ремонту: немає даних";
-  const coords = listing.coordinates
-    ? `${listing.coordinates.lat}, ${listing.coordinates.lng}`
-    : "координати: немає даних";
+  return [
+    formatListingBrief(listing),
+    `slug (лише для propertySlugs, не пиши клієнту): ${listing.slug}`,
+    listing.livingAreaM2 != null ? `житлова: ${listing.livingAreaM2} м²` : null,
+    listing.condition ? `стан: ${listing.condition}` : null,
+    `район: ${listing.district}`,
+    listing.features.length
+      ? `фічі: ${listing.features.slice(0, 4).join(", ")}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** Grouped catalog map for the model. Built from listings, not a handwritten district list. */
+export function buildCatalogKnowledge() {
+  const available = getCatalog().filter((listing) => listing.status === "available");
+  const byDistrict = new Map<string, CatalogListing[]>();
+  for (const listing of available) {
+    const bucket = byDistrict.get(listing.district) ?? [];
+    bucket.push(listing);
+    byDistrict.set(listing.district, bucket);
+  }
+
+  const districtBlocks = [...byDistrict.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, "uk"))
+    .map(([district, items]) => {
+      const lines = items
+        .sort((a, b) => a.priceUsd - b.priceUsd)
+        .map((listing) => {
+          const kind = listing.type === "house" ? "будинок" : "квартира";
+          const level =
+            listing.type === "house"
+              ? "будинок"
+              : `поверх ${listing.floorNumber}/${listing.floorsTotal}`;
+          return `- ${listing.headline} | ${kind} | ${listing.bedrooms} спальні | ${listing.areaM2} м² | ${level} | ${formatUsdSymbol(listing.priceUsd)} | slug:${listing.slug}`;
+        });
+      return `### ${district} (${items.length})\n${lines.join("\n")}`;
+    });
+
+  const byBeds = new Map<number, string[]>();
+  for (const listing of available) {
+    const bucket = byBeds.get(listing.bedrooms) ?? [];
+    bucket.push(`${listing.district}: ${listing.headline} (${formatUsdSymbol(listing.priceUsd)})`);
+    byBeds.set(listing.bedrooms, bucket);
+  }
+  const bedBlocks = [...byBeds.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([beds, lines]) => `### ${beds} спальні\n${lines.map((line) => `- ${line}`).join("\n")}`);
 
   return [
-    `ID: ${listing.id}`,
-    `slug: ${listing.slug}`,
-    `сторінка: /objects/${listing.slug}`,
-    `${listing.headline} (${listing.title})`,
-    `тип: ${listing.type}`,
-    `статус: ${listing.status}`,
-    `район: ${listing.district}, ${listing.city}`,
-    `адреса: ${listing.address}`,
-    `ціна: ${formatUsdSymbol(listing.priceUsd)} ${listing.currency}`,
-    `спальнь: ${listing.bedrooms}`,
-    `площа: ${listing.areaM2} м²`,
-    living,
-    `поверх: ${listing.floorNumber} з ${listing.floorsTotal}`,
-    `рік: ${listing.year}`,
-    condition,
-    `особливості: ${listing.features.join(", ") || "не вказано"}`,
-    coords,
-    `для кого: ${listing.forWhom}`,
-    `чому: ${listing.why}`,
-    listing.story,
-  ].join("\n");
+    `Публічна добірка: ${available.length} адрес. Якщо району немає в цьому списку, картки немає. Не кажи, що району немає, якщо він є нижче.`,
+    "## За районами",
+    ...districtBlocks,
+    "## За кількістю спалень",
+    ...bedBlocks,
+  ].join("\n\n");
+}
+
+export function listingsInDistrict(district: string) {
+  const needle = district.toLowerCase();
+  return getCatalog().filter(
+    (listing) =>
+      listing.status === "available" &&
+      listing.district.toLowerCase() === needle,
+  );
 }
 
 export function searchListings(prefs: UserPreferences) {
   return getCatalog()
     .filter((listing) => listing.status === "available")
+    .filter((listing) => {
+      if (prefs.propertyType === "house") {
+        return listing.type === "house";
+      }
+      if (
+        prefs.propertyType === "apartment" ||
+        prefs.propertyType === "newbuild" ||
+        prefs.propertyType === "secondary"
+      ) {
+        return listing.type === "apartment";
+      }
+      return true;
+    })
     .filter((listing) =>
       prefs.budgetMaxUsd == null
         ? true

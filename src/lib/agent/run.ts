@@ -1,32 +1,40 @@
 import { agentInstructions } from "@/content/agent/instructions";
 import {
   cheaperThan,
+  buildCatalogKnowledge,
   formatListingBrief,
   formatListingBlock,
   getCatalog,
   getListingBySlug,
+  listingsInDistrict,
   listingToSuggestion,
   searchListings,
 } from "@/lib/agent/catalog";
 import { formatKnowledgeBlock, retrieveKnowledge } from "@/lib/agent/knowledge";
+import { formatClientState } from "@/lib/agent/client-state";
 import { completeChat, getLlmConfig } from "@/lib/agent/config-llm";
 import { persistLead } from "@/lib/agent/leads";
 import {
   applySlot,
+  assistantImpliedPhoneDiscuss,
   bookingPrompt,
   canSubmitBooking,
   ensureOfferedSlots,
   isBookingReadySignal,
+  isPhoneDiscuss,
   meetingQuickReplies,
   nextBookingField,
   RESCHEDULE_RE,
   scrubFalseBookingClaims,
   slotQuickReplies,
+  tryApplyCallWindow,
   tryApplySlotFromMessage,
 } from "@/lib/agent/booking-flow";
 import { getUpcomingSlots, matchSlotChoice } from "@/lib/agent/schedule";
 import {
+  districtNamedIn,
   extractPreferences,
+  ingestBookingDetails,
   isCheaperIntent,
   isCompareIntent,
   isHandoffIntent,
@@ -34,7 +42,6 @@ import {
   isOutOfScopeIntent,
   isSideQuestionDuringBooking,
   isUpperFloorIntent,
-  mentionedUnknownDistrict,
   preferenceSummary,
   unknownFactQuery,
 } from "@/lib/agent/memory";
@@ -43,6 +50,7 @@ import {
   compareListings,
   isShowCardsIntent,
   nextSlot,
+  presentListing,
   presentListings,
   qualifyQuestion,
   readyToMatch,
@@ -116,7 +124,7 @@ async function saveBookingIfReady(
 
   return {
     ...persisted,
-    message: lang === "ru" ? persisted.messageRu : persisted.messageUk,
+    message: lang === "en" ? persisted.messageEn : persisted.messageUk,
   };
 }
 
@@ -153,7 +161,7 @@ function matchMessage(
   listings: Listing[],
   prefs: AgentSession["preferences"],
   intro: string,
-  showCards: boolean,
+  _showCards: boolean,
 ) {
   const slice = listings.slice(0, 2);
   const body = presentListings(slice);
@@ -161,7 +169,8 @@ function matchMessage(
   return reply(
     `${intro}\n\n${body}\n\n${closer}`,
     slice,
-    showCards,
+    // Always attach clickable cards — never paste raw /objects/... in text.
+    true,
   );
 }
 
@@ -232,7 +241,6 @@ function catalogReply(
 ): AgentReply {
   const prefs = session.preferences;
   const summary = preferenceSummary(prefs);
-  const extraDistrict = mentionedUnknownDistrict(text);
   const focus = resolveFocus(session, text);
   const fact = unknownFactQuery(text);
   const handoff = isHandoffIntent(text);
@@ -241,7 +249,7 @@ function catalogReply(
 
   if (isOutOfScopeIntent(text)) {
     return reply(
-      "Зрозуміла. Ми в NOVA працюємо з квартирами для життя і під дохід, не з комерційними залами чи приміщеннями. Якщо шукаєте житло або лот під оренду, можу допомогти. Що ближче вам?",
+      "Зрозуміла. Ми в NOVA працюємо з квартирами та будинками для життя і під дохід, не з комерційними залами чи приміщеннями. Якщо шукаєте житло або лот під оренду, можу допомогти. Що ближче вам?",
     );
   }
 
@@ -257,12 +265,6 @@ function catalogReply(
       [],
       false,
       { handoffRequested: true, needsContact: false },
-    );
-  }
-
-  if (extraDistrict) {
-    return reply(
-      `${extraDistrict} у географії пошуку є, але в публічній добірці окремої картки немає. Можу підібрати з Подолу, Печерська, Оболоні, Центру, Голосієва чи Осокорків, або передати менеджеру.`,
     );
   }
 
@@ -414,17 +416,49 @@ function catalogReply(
     /розкаж|характеристик|площа|поверх|ціна|скільки/.test(lower)
   ) {
     return reply(
-      `${focus.headline}: ${formatUsdSymbol(focus.priceUsd)}, ${focus.bedrooms} спальні, ${focus.areaM2} м², поверх ${focus.floorNumber}/${focus.floorsTotal}. ${focus.why}\n/objects/${focus.slug}\nЗаписати перегляд?`,
+      `${presentListing(focus)}\nЗаписати перегляд?`,
       [focus],
-      showCards,
+      true,
     );
   }
 
-  if (slot && !readyToMatch(prefs)) {
+  const namingDistrict = Boolean(districtNamedIn(text));
+  const askingAside =
+    /[?？]/.test(text) ||
+    /що\s|як\s|поясн|перегляд|значить|значит|расскаж|розкаж/i.test(text);
+
+  if (slot && !readyToMatch(prefs) && !namingDistrict && !askingAside) {
     return reply(qualifyQuestion(slot, prefs));
   }
 
   const matched = searchListings(prefs).slice(0, 2);
+
+  if (matched.length === 0 && prefs.district) {
+    const inDistrict = listingsInDistrict(prefs.district);
+    if (inDistrict.length > 0) {
+      const sameBeds =
+        prefs.bedrooms == null
+          ? inDistrict
+          : inDistrict.filter((listing) => listing.bedrooms === prefs.bedrooms);
+      const pool = (sameBeds.length > 0 ? sameBeds : inDistrict)
+        .slice()
+        .sort((a, b) => {
+          if (prefs.budgetMaxUsd == null) return a.priceUsd - b.priceUsd;
+          return (
+            Math.abs(a.priceUsd - prefs.budgetMaxUsd) -
+            Math.abs(b.priceUsd - prefs.budgetMaxUsd)
+          );
+        })
+        .slice(0, 2);
+
+      const intro =
+        sameBeds.length > 0
+          ? `У районі ${prefs.district} під цей бюджет точного збігу немає. У цьому ж районі є:`
+          : `У районі ${prefs.district} немає ${prefs.bedrooms} спалень у цьому бюджеті. Інші планування там:`;
+
+      return matchMessage(pool, prefs, intro, true);
+    }
+  }
 
   if (matched.length === 0) {
     const nearest = getCatalog()
@@ -447,7 +481,7 @@ function catalogReply(
     return matchMessage(
       nearest,
       prefs,
-      `Точного збігу під ${summary || "запит"} немає. Найближчі:`,
+      `Точного збігу під ${summary || "запит"} немає. Найближчі з інших районів:`,
       showCards,
     );
   }
@@ -472,10 +506,7 @@ function buildRetrieval(session: AgentSession, text: string, discuss: boolean) {
     ...matched.filter((listing) => listing.slug !== focus?.slug),
   ].slice(0, 4);
 
-  const catalogOverview = getCatalog()
-    .filter((listing) => listing.status === "available")
-    .map(formatListingBrief)
-    .join("\n");
+  const catalogOverview = buildCatalogKnowledge();
 
   return {
     listings,
@@ -498,6 +529,18 @@ export async function runAgent(
   userText: string,
   hints: RunHints = {},
 ): Promise<AgentReply> {
+  const previousAssistant = [...session.messages]
+    .reverse()
+    .find((message) => message.role === "assistant")?.content;
+
+  // Combined "time + name + phone" ask implies phone discussion format.
+  if (
+    !session.preferences.meetingType &&
+    assistantImpliedPhoneDiscuss(previousAssistant)
+  ) {
+    session.preferences.meetingType = "discuss";
+  }
+
   session.preferences = extractPreferences(userText, session.preferences);
 
   if (
@@ -511,6 +554,13 @@ export async function runAgent(
   }
 
   const lang = session.preferences.lang ?? "uk";
+
+  // Re-ingest after meetingType may have been set above / by extractPreferences.
+  session.preferences = ingestBookingDetails(
+    userText,
+    session.preferences,
+    lang,
+  );
 
   if (RESCHEDULE_RE.test(userText) && session.preferences.bookingStatus === "submitted") {
     session.preferences.preferredSlotId = undefined;
@@ -530,15 +580,13 @@ export async function runAgent(
 
   appendMessage(session, { role: "user", content: userText });
 
-  const lastAssistant = [...session.messages]
-    .reverse()
-    .find((message) => message.role === "assistant")?.content;
+  const lastAssistant = previousAssistant;
 
   const officeInfo = isOfficeInfoQuestion(userText);
   if (officeInfo) {
     const addressText =
-      lang === "ru"
-        ? `Офис NOVA ESTATE: ${site.address}. Часы: ${site.hours}. Телефон: ${site.phone}.`
+      lang === "en"
+        ? `NOVA ESTATE office: ${site.address}. Hours: ${site.hours}. Phone: ${site.phone}.`
         : `Офіс NOVA ESTATE: ${site.address}. Години: ${site.hours}. Телефон: ${site.phone}.`;
     const answered = reply(addressText, [], false, {
       needsContact: false,
@@ -553,14 +601,49 @@ export async function runAgent(
     session.preferences.bookingStatus === "collecting" &&
     isSideQuestionDuringBooking(userText);
 
+  const asksIfBooked =
+    /^(ти|вы|ви)\s+записав|записали\s*\??$|did you (book|save|record)|is it booked|я вже все|я уже все|вже все надісл|уже все отправ|i already (sent|gave)/i.test(
+      userText.trim(),
+    );
+
+  const dumpedContact =
+    Boolean(session.preferences.phone) &&
+    Boolean(session.preferences.name) &&
+    /\b([01]?\d|2[0-3])[:.][0-5]\d\b|\b0\d{9}\b|\+?380/.test(userText);
+
   const wantsBooking =
     !sideQuestion &&
     (isHandoffIntent(userText) ||
       isBookingReadySignal(userText, lastAssistant) ||
+      asksIfBooked ||
+      dumpedContact ||
+      assistantImpliedPhoneDiscuss(lastAssistant) ||
       session.preferences.bookingStatus === "collecting");
 
   if (wantsBooking && session.preferences.bookingStatus !== "submitted") {
     session.preferences.bookingStatus = "collecting";
+  }
+
+  if (
+    asksIfBooked &&
+    session.preferences.bookingStatus === "submitted" &&
+    session.handoff
+  ) {
+    const when = session.preferences.preferredSlotLabel
+      ? ` ${session.preferences.preferredSlotLabel}`
+      : "";
+    const confirmedText =
+      lang === "en"
+        ? `Yes, the request is already with the team${when}. We will confirm shortly.`
+        : `Так, заявку вже передано команді${when}. Ми скоро підтвердимо.`;
+    const confirmed = reply(confirmedText, [], false, {
+      handoffRequested: true,
+      needsContact: false,
+      source: "system",
+    });
+    appendMessage(session, { role: "assistant", content: confirmed.text });
+    await saveSession(session);
+    return confirmed;
   }
 
   const submitted = await saveBookingIfReady(
@@ -580,7 +663,7 @@ export async function runAgent(
   }
   if (submitted && !submitted.ok) {
     const failText =
-      lang === "ru" ? submitted.messageRu : submitted.messageUk;
+      lang === "en" ? submitted.messageEn : submitted.messageUk;
     const failed = reply(failText, [], false, {
       handoffRequested: true,
       needsContact: false,
@@ -598,16 +681,24 @@ export async function runAgent(
       : null;
 
   if (bookingField && !sideQuestion) {
-    const ensured = ensureOfferedSlots(session.preferences, lang);
-    session.preferences = ensured.prefs;
-
-    if (bookingField === "slot" && !session.preferences.preferredSlotLabel) {
-      const matched = matchSlotChoice(
+    if (isPhoneDiscuss(session.preferences)) {
+      session.preferences = tryApplyCallWindow(
+        session.preferences,
         userText,
-        getUpcomingSlots({ count: 8 }),
+        lang,
       );
-      if (matched) {
-        session.preferences = applySlot(session.preferences, matched, lang);
+    } else {
+      const ensured = ensureOfferedSlots(session.preferences, lang);
+      session.preferences = ensured.prefs;
+
+      if (bookingField === "slot" && !session.preferences.preferredSlotLabel) {
+        const matched = matchSlotChoice(
+          userText,
+          getUpcomingSlots({ count: 8 }),
+        );
+        if (matched) {
+          session.preferences = applySlot(session.preferences, matched, lang);
+        }
       }
     }
 
@@ -624,27 +715,41 @@ export async function runAgent(
         await saveSession(session);
         return confirmed;
       }
+      if (again && !again.ok) {
+        const failText = lang === "en" ? again.messageEn : again.messageUk;
+        const failed = reply(failText, [], false, {
+          handoffRequested: true,
+          needsContact: false,
+          bookingStep: null,
+          source: "system",
+        });
+        appendMessage(session, { role: "assistant", content: failed.text });
+        await saveSession(session);
+        return failed;
+      }
     }
 
-    const step = fieldAfter ?? bookingField;
-    const prompt = bookingPrompt(step, session.preferences, lang);
-    const quickReplies =
-      step === "meeting"
-        ? meetingQuickReplies(lang)
-        : step === "slot"
-          ? slotQuickReplies(session.preferences.offeredSlots ?? [])
-          : [];
+    const step = fieldAfter;
+    if (step) {
+      const prompt = bookingPrompt(step, session.preferences, lang);
+      const quickReplies =
+        step === "meeting"
+          ? meetingQuickReplies(lang)
+          : step === "slot" && !isPhoneDiscuss(session.preferences)
+            ? slotQuickReplies(session.preferences.offeredSlots ?? [])
+            : [];
 
-    const guided = reply(prompt, [], false, {
-      handoffRequested: true,
-      needsContact: false,
-      bookingStep: step,
-      offeredSlots: session.preferences.offeredSlots,
-      quickReplies,
-      source: "system",
-    });
+      const guided = reply(prompt, [], false, {
+        handoffRequested: true,
+        needsContact: false,
+        bookingStep: step,
+        offeredSlots: isPhoneDiscuss(session.preferences)
+          ? undefined
+          : session.preferences.offeredSlots,
+        quickReplies,
+        source: "system",
+      });
 
-    if (step === "meeting" || step === "slot" || step === "name" || step === "phone") {
       appendMessage(session, { role: "assistant", content: guided.text });
       await saveSession(session);
       return guided;
@@ -656,16 +761,24 @@ export async function runAgent(
   const discuss = !outOfScope && canDiscussListings(session, userText);
   let result = catalogReply(session, userText, showCards);
 
+  // District pick is answered from the catalog, not by the model.
+  if (districtNamedIn(userText) && result.suggestions.length > 0) {
+    const tracked = result.suggestions.map((item) => item.slug);
+    rememberView(session, tracked);
+    appendMessage(session, {
+      role: "assistant",
+      content: result.text,
+      propertySlugs: tracked,
+    });
+    await saveSession(session);
+    return result;
+  }
+
   if (!outOfScope) {
     const retrieval = buildRetrieval(session, userText, discuss);
     const llm = getLlmConfig();
 
     if (llm) {
-      const history = session.messages.slice(-40).map((message) => ({
-        role: message.role,
-        content: message.content,
-      }));
-
       const next = nextSlot(session.preferences);
       const slotsBlock = session.preferences.offeredSlots?.length
         ? session.preferences.offeredSlots
@@ -677,22 +790,35 @@ export async function runAgent(
         ? `Релевантні об'єкти (детально):\n${retrieval.catalogText || "немає точних збігів"}\n\nУся добірка (коротко):\n${retrieval.catalogOverview}`
         : `Поки не називай адреси з каталогу. Веди живу розмову: одне уточнення, якщо треба. propertySlugs = [].\nПідказка наступного уточнення: ${next ?? "район / консультація"}.\n\nДовідково вся добірка:\n${retrieval.catalogOverview}`;
 
+      const bookingOpen =
+        session.preferences.bookingStatus === "collecting" ||
+        session.preferences.bookingStatus === "error";
+      // Shorter history while collecting contacts — less room to invent “already booked”.
+      const historyWindow = bookingOpen ? 16 : 28;
+      const history = session.messages.slice(-historyWindow).map((message) => ({
+        role: message.role,
+        content: message.content,
+      }));
+
       const generated = await completeChat(llm, [
         { role: "system", content: agentInstructions },
         {
           role: "system",
-          content: `Мова відповіді: ${lang === "ru" ? "російська" : "українська"}
-Пам'ять клієнта: ${JSON.stringify(session.preferences)}
+          content: `Мова відповіді: ${lang === "en" ? "англійська" : "українська"}
+Стан клієнта (факти з бекенду, довіряй лише цьому):
+${formatClientState(session)}
 Наступне уточнення за потреби: ${next ?? "обговорення адрес / зустріч"}
 Можна називати адреси текстом: ${discuss ? "так" : "ні"}
 Клієнт просив картки зараз: ${showCards ? "так, можна propertySlugs (макс 2)" : "ні, propertySlugs обов'язково []"}
-Фокус: ${session.focusSlug ?? "немає"}
-Останні запропоновані: ${session.lastMatchedSlugs.join(", ") || "немає"}
-Переглянуті: ${session.viewedSlugs.join(", ") || "немає"}
-Доступні слоти (лише ці):\n${slotsBlock}
-НЕ стверджуй, що заявку надіслано — це робить лише сервер.
-Офіс агентства: ${site.address}. Години: ${site.hours}. Телефон: ${site.phone}.
-Збирай запис лише текстом у діалозі. Форм у чаті немає.`,
+Переглянуті slug: ${session.viewedSlugs.slice(0, 6).join(", ") || "немає"}
+Доступні слоти (лише ці, не вигадуй інші):\n${slotsBlock}
+GUARDRAILS:
+- Заявку зберігає лише бекенд. Не пиши що записав, передав брокеру, зібрав дані для дзвінка як факт успіху.
+- Якщо в стані бракує поля — спитай лише його, одним коротким питанням.
+- Ціни, хвилини до метро, розстрочку — лише з каталогу/бази знань; інакше скажи що уточнить брокер.
+- Підбірка об'єктів клієнту: headline + ціна + спальні + площа + поверх + коротке why. Не пиши /objects/... і не пиши «Деталі:» — для посилань є картки (propertySlugs).
+Офіс: ${site.address}. Години: ${site.hours}. Телефон: ${site.phone}.
+Збирай запис лише текстом у діалозі.`,
         },
         { role: "system", content: catalogBlock },
         { role: "system", content: `База знань:\n${retrieval.knowledgeText}` },
@@ -720,7 +846,11 @@ export async function runAgent(
               : [];
 
         result = {
-          text: scrubFalseBookingClaims(generated.text.trim(), lang),
+          text: scrubFalseBookingClaims(
+            generated.text.trim(),
+            lang,
+            session.preferences,
+          ),
           suggestions: memoryListings.map(listingToSuggestion),
           showCards: showCards && cardListings.length > 0,
           quickReplies: [],
@@ -729,8 +859,71 @@ export async function runAgent(
           bookingStep: null,
           source: "llm",
         };
+
+        // LLM may invent "passed to broker" — if we already have full details, persist now.
+        if (
+          session.preferences.bookingStatus !== "submitted" &&
+          canSubmitBooking(session.preferences)
+        ) {
+          const afterLlm = await saveBookingIfReady(session, "chat");
+          if (afterLlm?.ok && "message" in afterLlm && afterLlm.message) {
+            result = {
+              ...result,
+              text: afterLlm.message,
+              handoffRequested: true,
+              needsContact: false,
+              bookingStep: null,
+              source: "system",
+            };
+          } else if (afterLlm && !afterLlm.ok) {
+            result = {
+              ...result,
+              text: lang === "en" ? afterLlm.messageEn : afterLlm.messageUk,
+              handoffRequested: true,
+              source: "system",
+            };
+          }
+        } else if (
+          /хвилинку|one moment|надсилаю заявку|submitting your request/i.test(
+            result.text,
+          ) &&
+          canSubmitBooking(session.preferences)
+        ) {
+          const afterScrub = await saveBookingIfReady(session, "chat");
+          if (afterScrub?.ok && "message" in afterScrub && afterScrub.message) {
+            result = {
+              ...result,
+              text: afterScrub.message,
+              handoffRequested: true,
+              source: "system",
+            };
+          }
+        }
       }
     }
+  }
+
+  const repeatedPitch =
+    result.source === "catalog" &&
+    /точного збігу|У районі .+ є:|маю два варіанти|Найближчі з інших районів/.test(
+      result.text,
+    ) &&
+    !districtNamedIn(userText);
+
+  if (repeatedPitch) {
+    const aboutViewing = /перегляд/i.test(userText);
+    result = reply(
+      aboutViewing
+        ? lang === "en"
+          ? "A viewing is a visit to the apartment. I can book a short call now, and the manager will set the viewing time. Phone, online, or the office?"
+          : "Перегляд — це візит на адресу, щоб подивитись квартиру вживу. Зараз можу записати коротку розмову, а час перегляду узгодить менеджер. Зручніше дзвінок, онлайн чи офіс?"
+        : lang === "en"
+          ? "What should I clarify about this home, or shall we book a call?"
+          : "Що саме уточнити по цій квартирі, або одразу запишемо розмову: дзвінок, онлайн чи офіс?",
+      [],
+      false,
+      { source: "system" },
+    );
   }
 
   const trackedSlugs = result.suggestions.map((item) => item.slug);
@@ -747,7 +940,7 @@ export async function runAgent(
     result.bookingStep = step;
     if (step === "meeting") {
       result.quickReplies = meetingQuickReplies(lang);
-    } else if (step === "slot") {
+    } else if (step === "slot" && !isPhoneDiscuss(session.preferences)) {
       const ensured = ensureOfferedSlots(session.preferences, lang);
       session.preferences = ensured.prefs;
       result.offeredSlots = session.preferences.offeredSlots;
@@ -766,9 +959,9 @@ export async function runAgent(
   return result;
 }
 
-function formatUpcomingSlots(lang: "uk" | "ru") {
+function formatUpcomingSlots(lang: "uk" | "en") {
   return getUpcomingSlots({ count: 3 })
-    .map((s, i) => `${i + 1}) ${lang === "ru" ? s.labelRu : s.labelUk}`)
+    .map((s, i) => `${i + 1}) ${lang === "en" ? s.labelEn : s.labelUk}`)
     .join("\n");
 }
 

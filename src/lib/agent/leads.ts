@@ -37,7 +37,7 @@ export type PersistLeadResult = {
   telegramOk: boolean;
   fileOk: boolean;
   messageUk: string;
-  messageRu: string;
+  messageEn: string;
   error?: string;
 };
 
@@ -64,11 +64,15 @@ function toSheetFields(entry: LeadEntry, phone: string) {
     source: entry.source,
     name: entry.name,
     phone,
+    format: service,
     service,
+    details: doctorParts.join(" · ") || "NOVA ESTATE",
     doctor: doctorParts.join(" · ") || "NOVA ESTATE",
     date: entry.date ?? null,
     time: entry.time ?? null,
+    when: entry.slotLabel ?? null,
     slotLabel: entry.slotLabel ?? null,
+    summary: concernParts.join(" | ") || `Заявка: ${formatUk}`,
     concern: concernParts.join(" | ") || `Заявка: ${formatUk}`,
     status: "new",
   };
@@ -80,7 +84,7 @@ export async function persistLead(
   const phone = normalizeUaPhone(entry.phone);
   const when = entry.slotLabel ? ` ${entry.slotLabel}` : "";
   const formatUk = meetingLabel(entry.meetingType, "uk");
-  const formatRu = meetingLabel(entry.meetingType, "ru");
+  const formatEn = meetingLabel(entry.meetingType, "en");
 
   let fileOk = false;
   try {
@@ -130,8 +134,8 @@ export async function persistLead(
       fileOk,
       messageUk:
         "Заявку не вдалося зберегти. Спробуйте ще раз або зателефонуйте нам.",
-      messageRu:
-        "Заявку не удалось сохранить. Попробуйте ещё раз или позвоните нам.",
+      messageEn:
+        "We could not save the request. Please try again or call us.",
       error: sheet.error,
     };
   }
@@ -144,8 +148,8 @@ export async function persistLead(
       fileOk: false,
       messageUk:
         "Заявку не вдалося зберегти. Спробуйте ще раз або зателефонуйте нам.",
-      messageRu:
-        "Заявку не удалось сохранить. Попробуйте ещё раз или позвоните нам.",
+      messageEn:
+        "We could not save the request. Please try again or call us.",
       error: sheet.error || "persist_failed",
     };
   }
@@ -156,6 +160,6 @@ export async function persistLead(
     telegramOk,
     fileOk,
     messageUk: `Готово. Заявку надіслано на${when}, формат: ${formatUk}. Ми скоро підтвердимо.`,
-    messageRu: `Готово. Заявку отправлено на${when}, формат: ${formatRu}. Мы скоро подтвердим.`,
+    messageEn: `Done. Request sent for${when}, format: ${formatEn}. We will confirm shortly.`,
   };
 }

@@ -1,4 +1,6 @@
-export type PropertyBadge = "Нове" | "У добірці" | "−8%";
+export type PropertyBadge = "Нове" | "У добірці" | "−8%" | "Будинок";
+
+export type PropertyKind = "apartment" | "house";
 
 export type PropertyGalleryItem = {
   src: string;
@@ -16,6 +18,8 @@ export type Property = {
   priceUsd: number;
   areaM2: number;
   bedrooms: number;
+  kind: PropertyKind;
+  featured?: boolean;
   image: string;
   imageAlt: string;
   badge: PropertyBadge;
@@ -24,6 +28,6 @@ export type Property = {
   story: string;
   floor: string;
   year: string;
-  plan: "two" | "three" | "four";
+  plan: "studio" | "two" | "three" | "four" | "house";
   gallery: PropertyGalleryItem[];
 };

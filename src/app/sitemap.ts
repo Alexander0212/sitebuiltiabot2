@@ -13,6 +13,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "weekly",
       priority: 1,
     },
+    {
+      url: `${site.url}/objects`,
+      lastModified: now,
+      changeFrequency: "weekly",
+      priority: 0.9,
+    },
     ...properties.map((property) => ({
       url: `${site.url}${getPropertyHref(property.slug)}`,
       lastModified: now,

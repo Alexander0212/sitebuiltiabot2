@@ -5,7 +5,7 @@ export const site = {
   url: "https://novaestate.ua",
   tagline: "Приватний підбір. Не каталог.",
   description:
-    "NOVA ESTATE: приватне агентство в Києві. 30 хвилин розмови, потім від 4 до 6 адрес під бюджет і ритм життя. Житло та інвестиції без показу десятків квартир навмання.",
+    "NOVA ESTATE: приватне агентство в Києві. 30 хвилин розмови, потім короткий список під бюджет і ритм життя. У публічній добірці — 26 адрес: квартири та будинки.",
   email: "hello@novaestate.ua",
   phone: "+380 44 333 21 08",
   phoneHref: "tel:+380443332108",
@@ -22,14 +22,14 @@ export const primaryCta = {
 
 export const navigation = [
   { href: "/#budget", label: "Бюджет" },
-  { href: "/#objects", label: "Об'єкти" },
+  { href: "/objects", label: "Об'єкти" },
   { href: "/#investments", label: "Інвестиції" },
   { href: "/#approach", label: "Підхід" },
   { href: "/#contact", label: "Контакт" },
 ] as const;
 
 export const footerNavigation = [
-  { href: "/#objects", label: "Об'єкти" },
+  { href: "/objects", label: "Об'єкти" },
   { href: "/#budget", label: "Калькулятор" },
   { href: "/#investments", label: "Для інвестицій" },
   { href: "/#approach", label: "Про компанію" },
@@ -47,4 +47,8 @@ export const districts = [
   "Нивки",
   "Шулявка",
   "Деміївка",
+  "Святошин",
+  "Лівий берег",
+  "Конча-Заспа",
+  "Пуща-Водиця",
 ] as const;

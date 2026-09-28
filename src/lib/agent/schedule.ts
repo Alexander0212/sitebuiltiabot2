@@ -5,7 +5,7 @@ export type AgencySlot = {
   dateISO: string;
   time: string;
   labelUk: string;
-  labelRu: string;
+  labelEn: string;
   weekday: number;
 };
 
@@ -16,9 +16,13 @@ const SATURDAY_TIMES = ["10:00", "13:00"] as const;
 const SUNDAY_TIMES = ["11:30"] as const;
 
 const WEEKDAY_SHORT_UK = ["нд", "пн", "вт", "ср", "чт", "пт", "сб"] as const;
-const WEEKDAY_SHORT_RU = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"] as const;
+const WEEKDAY_SHORT_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 export const DEFAULT_OFFER_COUNT = 3;
+
+export function getKyivNow(date = new Date()) {
+  return kyivParts(date);
+}
 
 function kyivParts(date = new Date()) {
   const fmt = new Intl.DateTimeFormat("en-GB", {
@@ -77,11 +81,11 @@ function addCalendarDays(year: number, month: number, day: number, add: number) 
 function relativeDayLabel(
   offset: number,
   weekday: number,
-  lang: "uk" | "ru",
+  lang: "uk" | "en",
 ) {
-  if (offset === 0) return lang === "ru" ? "сегодня" : "сьогодні";
-  if (offset === 1) return lang === "ru" ? "завтра" : "завтра";
-  const list = lang === "ru" ? WEEKDAY_SHORT_RU : WEEKDAY_SHORT_UK;
+  if (offset === 0) return lang === "en" ? "today" : "сьогодні";
+  if (offset === 1) return lang === "en" ? "tomorrow" : "завтра";
+  const list = lang === "en" ? WEEKDAY_SHORT_EN : WEEKDAY_SHORT_UK;
   return list[weekday] ?? "";
 }
 
@@ -96,14 +100,14 @@ function buildSlot(
   const dateISO = `${year}-${pad(month)}-${pad(day)}`;
   const id = `${dateISO}T${time}`;
   const relUk = relativeDayLabel(dayOffset, weekday, "uk");
-  const relRu = relativeDayLabel(dayOffset, weekday, "ru");
+  const relEn = relativeDayLabel(dayOffset, weekday, "en");
   return {
     id,
     dateISO,
     time,
     weekday,
     labelUk: `${relUk} ${pad(day)}.${pad(month)} о ${time}`,
-    labelRu: `${relRu} ${pad(day)}.${pad(month)} в ${time}`,
+    labelEn: `${relEn} ${pad(day)}.${pad(month)} at ${time}`,
   };
 }
 
@@ -155,32 +159,34 @@ export function getUpcomingSlots(options?: {
 
 export function formatSlotsForPrompt(
   slots: AgencySlot[],
-  lang: "uk" | "ru" = "uk",
+  lang: "uk" | "en" = "uk",
 ): string {
   if (!slots.length) {
-    return lang === "ru"
-      ? "На ближайшие дни почти всё занято. Могу предложить 2–3 окна чуть дальше."
+    return lang === "en"
+      ? "The next few days are almost full. I can offer 2–3 windows a bit further out."
       : "На найближчі дні майже все зайнято. Можу запропонувати 2–3 вікна трохи далі.";
   }
   return slots
-    .map((s, i) => `${i + 1}) ${lang === "ru" ? s.labelRu : s.labelUk}`)
+    .map((s, i) => `${i + 1}) ${lang === "en" ? s.labelEn : s.labelUk}`)
     .join("\n");
 }
 
 function preferDayHits(trimmed: string, hits: AgencySlot[]): AgencySlot | null {
   if (!hits.length) return null;
   if (hits.length === 1) return hits[0];
-  if (trimmed.includes("завтра")) {
-    return (
-      hits.find((s) => s.labelUk.startsWith("завтра") || s.labelRu.startsWith("завтра")) ??
-      null
-    );
-  }
-  if (/сьогодн|сегодня/.test(trimmed)) {
+  if (/завтра|tomorrow/.test(trimmed)) {
     return (
       hits.find(
         (s) =>
-          s.labelUk.startsWith("сьогодні") || s.labelRu.startsWith("сегодня"),
+          s.labelUk.startsWith("завтра") || s.labelEn.startsWith("tomorrow"),
+      ) ?? null
+    );
+  }
+  if (/сьогодн|today/.test(trimmed)) {
+    return (
+      hits.find(
+        (s) =>
+          s.labelUk.startsWith("сьогодні") || s.labelEn.startsWith("today"),
       ) ?? null
     );
   }
@@ -194,7 +200,7 @@ export function matchSlotChoice(
   const trimmed = message.trim().toLowerCase();
   if (!slots.length) return null;
 
-  const num = trimmed.match(/^(?:варіант|вариант\s*)?(\d{1,2})\s*[).:]?$/i);
+  const num = trimmed.match(/^(?:варіант|вариант\s*|option\s*)?(\d{1,2})\s*[).:]?$/i);
   if (num) {
     const idx = Number(num[1]) - 1;
     if (idx >= 0 && idx < slots.length) return slots[idx];
@@ -214,9 +220,9 @@ export function matchSlotChoice(
 
   const hourOnly =
     trimmed.match(
-      /(?:завтра|сьогодн\w*|сегодня|післязавтра|послезавтра|на|о|в)\s+(?:о\s*|в\s*)?([01]?\d|2[0-3])\b(?!\s*[:.]\d)/i,
+      /(?:завтра|tomorrow|сьогодн\w*|today|післязавтра|на|о|в|at)\s+(?:о\s*|в\s*|at\s*)?([01]?\d|2[0-3])\b(?!\s*[:.]\d)/i,
     ) ||
-    trimmed.match(/\b([01]?\d|2[0-3])\s*(?:год(?:ина|ину|и|ин)?)\b/i);
+    trimmed.match(/\b([01]?\d|2[0-3])\s*(?:год(?:ина|ину|и|ин)?|o'?clock)\b/i);
   if (hourOnly) {
     const hour = pad(Number(hourOnly[1]));
     const exact = `${hour}:00`;
@@ -231,17 +237,17 @@ export function matchSlotChoice(
 
   for (const slot of slots) {
     if (trimmed.includes(slot.labelUk.toLowerCase())) return slot;
-    if (trimmed.includes(slot.labelRu.toLowerCase())) return slot;
+    if (trimmed.includes(slot.labelEn.toLowerCase())) return slot;
   }
 
   return null;
 }
 
-export function slotToOffered(slot: AgencySlot, lang: "uk" | "ru" = "uk") {
+export function slotToOffered(slot: AgencySlot, lang: "uk" | "en" = "uk") {
   return {
     id: slot.id,
     dateISO: slot.dateISO,
     time: slot.time,
-    label: lang === "ru" ? slot.labelRu : slot.labelUk,
+    label: lang === "en" ? slot.labelEn : slot.labelUk,
   };
 }

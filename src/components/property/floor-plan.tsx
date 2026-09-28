@@ -10,6 +10,14 @@ const plans: Record<
   Property["plan"],
   { rooms: { x: number; y: number; w: number; h: number; label: string }[] }
 > = {
+  studio: {
+    rooms: [
+      { x: 8, y: 8, w: 200, h: 140, label: "Студія" },
+      { x: 216, y: 8, w: 76, h: 70, label: "Кухня" },
+      { x: 216, y: 86, w: 76, h: 62, label: "Ванна" },
+      { x: 8, y: 156, w: 120, h: 36, label: "Передпокій" },
+    ],
+  },
   two: {
     rooms: [
       { x: 8, y: 8, w: 184, h: 118, label: "Вітальня" },
@@ -42,6 +50,18 @@ const plans: Record<
       { x: 234, y: 140, w: 58, h: 52, label: "Ванна" },
     ],
   },
+  house: {
+    rooms: [
+      { x: 8, y: 8, w: 140, h: 90, label: "Вітальня" },
+      { x: 156, y: 8, w: 136, h: 50, label: "Кухня" },
+      { x: 156, y: 66, w: 66, h: 56, label: "Кабінет" },
+      { x: 230, y: 66, w: 62, h: 56, label: "Ванна" },
+      { x: 8, y: 106, w: 68, h: 86, label: "Спальня" },
+      { x: 84, y: 106, w: 64, h: 86, label: "Спальня" },
+      { x: 156, y: 130, w: 66, h: 62, label: "Спальня" },
+      { x: 230, y: 130, w: 62, h: 62, label: "Тераса" },
+    ],
+  },
 };
 
 export function FloorPlan({ plan, className }: FloorPlanProps) {
@@ -53,7 +73,7 @@ export function FloorPlan({ plan, className }: FloorPlanProps) {
         viewBox="0 0 300 200"
         className="h-auto w-full text-foreground"
         role="img"
-        aria-label="Схематичний план квартири"
+        aria-label="Схематичний план об'єкта"
       >
         <rect width="300" height="200" fill="var(--paper)" />
         {rooms.map((room) => (

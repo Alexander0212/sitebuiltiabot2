@@ -16,7 +16,7 @@ export type PropertyKind =
 
 export type ClientGoal = "live" | "invest" | "family" | "relocate" | "other";
 
-export type AgentLang = "uk" | "ru";
+export type AgentLang = "uk" | "en";
 
 export type BookingStatus = "idle" | "collecting" | "submitted" | "error";
 
@@ -117,7 +117,7 @@ export type AgentReply = {
 export type PropertyStatus = "available" | "reserved" | "sold";
 
 export type PropertyFacts = {
-  type: "apartment";
+  type: "apartment" | "house";
   livingAreaM2: number | null;
   floorNumber: number;
   floorsTotal: number;

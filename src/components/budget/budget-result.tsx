@@ -1,12 +1,11 @@
 "use client";
 
-import { useLenis } from "lenis/react";
+import { useRouter } from "next/navigation";
 
 import { AnimatedNumber } from "@/components/budget/animated-number";
 import { PropertyMatch } from "@/components/property/property-match";
 import { Button } from "@/components/ui/button";
 import { formatUsdMonthly, formatUsdSymbol } from "@/lib/format";
-import { MOTION, prefersReducedMotion } from "@/lib/motion";
 import type { BudgetResult } from "@/lib/budget";
 import type { Property } from "@/types/property";
 
@@ -21,26 +20,10 @@ export function BudgetResultPanel({
   matches,
   compact = false,
 }: BudgetResultPanelProps) {
-  const lenis = useLenis();
+  const router = useRouter();
 
   function showMatches() {
-    const target = document.getElementById("objects");
-    if (!target) {
-      return;
-    }
-
-    if (lenis) {
-      lenis.scrollTo(target, {
-        offset: MOTION.headerOffset,
-        duration: prefersReducedMotion() ? 0 : MOTION.lenisDuration,
-      });
-      return;
-    }
-
-    target.scrollIntoView({
-      behavior: prefersReducedMotion() ? "auto" : "smooth",
-      block: "start",
-    });
+    router.push("/objects");
   }
 
   return (
@@ -102,8 +85,8 @@ export function BudgetResultPanel({
           Дивитись усю добірку
         </Button>
         <p className="mt-4 hidden max-w-sm text-[0.75rem] leading-relaxed text-paper/60 lg:block">
-          Розрахунок орієнтовний. Адреси з шести об&apos;єктів, які зараз на
-          сайті.
+          Розрахунок орієнтовний. Адреси з публічної добірки на сайті — 26
+          об&apos;єктів.
         </p>
       </div>
     </div>

@@ -52,7 +52,7 @@ export async function POST(request: Request) {
       date = matched.dateISO;
       time = matched.time;
       slotId = matched.id;
-      slotLabel = lang === "ru" ? matched.labelRu : matched.labelUk;
+      slotLabel = lang === "en" ? matched.labelEn : matched.labelUk;
     }
   }
 
@@ -60,8 +60,8 @@ export async function POST(request: Request) {
     return Response.json(
       {
         error:
-          lang === "ru"
-            ? "Выберите слот встречи"
+          lang === "en"
+            ? "Please choose a meeting slot"
             : "Оберіть слот зустрічі",
       },
       { status: 400 },
@@ -106,13 +106,13 @@ export async function POST(request: Request) {
     return Response.json(
       {
         ok: false,
-        error: lang === "ru" ? persisted.messageRu : persisted.messageUk,
+        error: lang === "en" ? persisted.messageEn : persisted.messageUk,
       },
       { status: 502 },
     );
   }
 
-  const text = lang === "ru" ? persisted.messageRu : persisted.messageUk;
+  const text = lang === "en" ? persisted.messageEn : persisted.messageUk;
   session.preferences.bookingStatus = "submitted";
   session.handoff = {
     requestedAt: at,

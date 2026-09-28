@@ -70,7 +70,7 @@ export default async function ObjectPage({ params }: ObjectPageProps) {
   const related = getRelatedProperties(property.slug);
   const jsonLd = {
     "@context": "https://schema.org",
-    "@type": "Apartment",
+    "@type": property.kind === "house" ? "House" : "Apartment",
     name: property.headline,
     description: property.why,
     url: `${site.url}${getPropertyHref(property.slug)}`,
@@ -108,8 +108,8 @@ export default async function ObjectPage({ params }: ObjectPageProps) {
             Головна
           </Link>
           <span className="mx-2 text-warm">/</span>
-          <Link href="/#objects" className="hover:text-foreground">
-            Добірка
+          <Link href="/objects" className="hover:text-foreground">
+            Об'єкти
           </Link>
           <span className="mx-2 text-warm">/</span>
           <span className="text-foreground">{property.headline}</span>
@@ -139,7 +139,7 @@ export default async function ObjectPage({ params }: ObjectPageProps) {
               <span className="text-warm"> · </span>
               {formatArea(property.areaM2)}
               <span className="text-warm"> · </span>
-              поверх {property.floor}
+              {property.kind === "house" ? property.floor : `поверх ${property.floor}`}
             </p>
 
             <p className="mt-6 text-[1.05rem] leading-relaxed">{property.forWhom}</p>
@@ -169,7 +169,7 @@ export default async function ObjectPage({ params }: ObjectPageProps) {
               </div>
               <div>
                 <dt className="text-[0.72rem] tracking-[0.14em] text-ink-soft uppercase">
-                  Поверх
+                  {property.kind === "house" ? "Рівні" : "Поверх"}
                 </dt>
                 <dd className="mt-1 font-serif text-xl">{property.floor}</dd>
               </div>

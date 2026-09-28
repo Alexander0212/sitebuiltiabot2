@@ -3,28 +3,217 @@ import { normalizeUaPhone, isValidUaPhone } from "@/lib/agent/phone";
 import {
   detectLang,
   extractMeetingType,
+  parseFlexibleCallTime,
 } from "@/lib/agent/booking-flow";
-import type { UserPreferences } from "@/types/agent";
+import type { AgentLang, UserPreferences } from "@/types/agent";
 
-const DISTRICT_ALIASES: Record<string, string> = {
-  поділ: "Поділ",
-  печерськ: "Печерськ",
-  печерську: "Печерськ",
-  оболонь: "Оболонь",
-  оболоні: "Оболонь",
-  центр: "Центр",
-  голосіїв: "Голосіївський район",
-  голосієво: "Голосіївський район",
-  голосієві: "Голосіївський район",
-  осокорки: "Осокорки",
-  осокорках: "Осокорки",
-};
+const DISTRICT_ALIASES: [string, string][] = [
+  ["лівий берег", "Лівий берег"],
+  ["лівому березі", "Лівий берег"],
+  ["лівобереж", "Лівий берег"],
+  ["голосіївськ", "Голосіївський район"],
+  ["голосіїв", "Голосіївський район"],
+  ["голосієв", "Голосіївський район"],
+  ["конча-засп", "Конча-Заспа"],
+  ["конча засп", "Конча-Заспа"],
+  ["пуща-водиц", "Пуща-Водиця"],
+  ["пуща водиц", "Пуща-Водиця"],
+  ["віта-поштов", "Віта-Поштова"],
+  ["віта поштов", "Віта-Поштова"],
+  ["солом'ян", "Солом'янка"],
+  ["соломян", "Солом'янка"],
+  ["деміївк", "Деміївка"],
+  ["печерськ", "Печерськ"],
+  ["печерск", "Печерськ"],
+  ["оболонь", "Оболонь"],
+  ["осокорк", "Осокорки"],
+  ["святошин", "Святошин"],
+  ["шулявк", "Шулявка"],
+  ["бортнич", "Бортничі"],
+  ["подол", "Поділ"],
+  ["поділ", "Поділ"],
+  ["нивки", "Нивки"],
+  ["гатне", "Гатне"],
+  ["центр", "Центр"],
+];
+
+const DISTRICT_SUFFIX =
+  /^(?:а|у|і|е|ю|я|ом|ем|ах|ях|ам|ям|ів|ов|ою|ею)?$/i;
+
+function mentionsAlias(text: string, alias: string) {
+  const lower = text.toLowerCase();
+  let from = 0;
+  while (from < lower.length) {
+    const index = lower.indexOf(alias, from);
+    if (index < 0) return false;
+    const beforeOk =
+      index === 0 || !/[a-zа-яіїєґ0-9']/i.test(lower[index - 1] ?? "");
+    const rest = lower.slice(index + alias.length);
+    const end = rest.search(/[^a-zа-яіїєґ']/i);
+    const tail = end === -1 ? rest : rest.slice(0, end);
+    if (beforeOk && DISTRICT_SUFFIX.test(tail)) return true;
+    from = index + alias.length;
+  }
+  return false;
+}
+
+const NAME_STOP =
+  /^(так|да|добре|хорошо|ок|okay|yes|завтра|сьогодні|сегодня|today|tomorrow|дзвінок|звонок|офіс|офис|онлайн|online|яка|какой|какая|мене|меня|після|после|обід|обед|годині|час|time)$/i;
+
+function extractPhone(text: string) {
+  const match = text.match(
+    /(\+?380[\d\s()-]{8,14}|\b0\d{9}\b|\b\d{9}\b)/,
+  );
+  if (!match) return undefined;
+  const normalized = normalizeUaPhone(match[1]);
+  return isValidUaPhone(normalized) ? normalized : undefined;
+}
+
+function extractName(text: string, bookingCollecting: boolean) {
+  const beforePhone = text.match(
+    /([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})\s*[,.]?\s*(?:\+?380\d{9}|0\d{9}|\d{9})\b/u,
+  );
+  const explicit =
+    text.match(/мене\s+звати\s+([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})/i) ||
+    text.match(/меня\s+зовут\s+([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})/i) ||
+    text.match(/my\s+name\s+is\s+([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})/i) ||
+    text.match(/ім'?я\s*[:\-]?\s*([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})/i) ||
+    text.match(/имя\s*[:\-]?\s*([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})/i);
+
+  const candidate = (explicit?.[1] || beforePhone?.[1] || "").trim();
+  if (candidate && !NAME_STOP.test(candidate) && !/^\d/.test(candidate)) {
+    return candidate;
+  }
+
+  if (bookingCollecting && /^[A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30}$/u.test(text.trim())) {
+    return text.trim();
+  }
+
+  return undefined;
+}
+
+/**
+ * Pull phone / name / call-time from one chat message.
+ * If contact details arrive without a format, default to phone discussion.
+ */
+export function ingestBookingDetails(
+  text: string,
+  current: UserPreferences,
+  lang: AgentLang = "uk",
+): UserPreferences {
+  const next = { ...current };
+  const phone = extractPhone(text);
+  if (phone) next.phone = phone;
+
+  const name = extractName(text, current.bookingStatus === "collecting");
+  if (name) next.name = name;
+
+  const hasContactSignal = Boolean(phone || name || /\b([01]?\d|2[0-3])[:.][0-5]\d\b/.test(text));
+  if (
+    !next.meetingType &&
+    (current.bookingStatus === "collecting" || hasContactSignal) &&
+    (phone || name)
+  ) {
+    // Chat users often dump details without choosing format — phone call is the lightest default.
+    next.meetingType = "discuss";
+  }
+
+  if (
+    next.meetingType === "discuss" &&
+    (!next.preferredSlotLabel || !next.preferredDate || !next.preferredTime)
+  ) {
+    const parsed = parseFlexibleCallTime(text, lang);
+    if (parsed) {
+      next.preferredSlotId = `call:${parsed.dateISO}T${parsed.time}`;
+      next.preferredDate = parsed.dateISO;
+      next.preferredTime = parsed.time;
+      next.preferredSlotLabel = parsed.label;
+      next.offeredSlots = undefined;
+    }
+  }
+
+  return next;
+}
+
+function extractBedrooms(
+  text: string,
+  current: UserPreferences,
+): number | undefined {
+  const lower = text.toLowerCase().trim();
+
+  if (/однокімнатн|однокомнатн|1\s*спальн|одну спальн|1\s*bed|one[-\s]?bed/.test(lower)) {
+    return 1;
+  }
+  if (
+    /двокімнатн|двухкомнатн|2\s*спальн|дві спальн|дві кімнат|две комнат|2\s*bed|two[-\s]?bed/.test(
+      lower,
+    )
+  ) {
+    return 2;
+  }
+  if (
+    /трикімнатн|трехкомнатн|3\s*спальн|три спальн|три кімнат|3\s*bed|three[-\s]?bed/.test(
+      lower,
+    )
+  ) {
+    return 3;
+  }
+  if (
+    /чотирик|четырехкомнатн|4\s*спальн|чотири спальн|4\s*bed|four[-\s]?bed/.test(
+      lower,
+    )
+  ) {
+    return 4;
+  }
+  if (/5\s*спальн|п'?ять спальн|пять спальн|5\s*bed|five[-\s]?bed/.test(lower)) {
+    return 5;
+  }
+
+  // Short answers while bedrooms still unknown: "2", "дві", "2 спальні".
+  if (current.bedrooms == null) {
+    const word: Record<string, number> = {
+      "1": 1,
+      одна: 1,
+      одну: 1,
+      один: 1,
+      one: 1,
+      "2": 2,
+      дві: 2,
+      две: 2,
+      два: 2,
+      двох: 2,
+      two: 2,
+      "3": 3,
+      три: 3,
+      three: 3,
+      "4": 4,
+      чотири: 4,
+      четыре: 4,
+      four: 4,
+      "5": 5,
+      "п'ять": 5,
+      пять: 5,
+      five: 5,
+    };
+
+    const short = lower
+      .replace(/[.!?…]+$/g, "")
+      .replace(/\s*(?:спальн\w*|bedrooms?|кімнат\w*|комнат\w*)\s*$/i, "")
+      .trim();
+
+    if (Object.prototype.hasOwnProperty.call(word, short)) {
+      return word[short];
+    }
+  }
+
+  return undefined;
+}
 
 export function extractPreferences(
   text: string,
   current: UserPreferences,
 ): UserPreferences {
-  const next = { ...current };
+  let next = { ...current };
   const lower = text.toLowerCase();
 
   next.lang = detectLang(text, current.lang);
@@ -57,12 +246,16 @@ export function extractPreferences(
   }
 
   const until = lower.match(
-    /(?:до|бюджет[уа]?|under|до\s*\$)\s*\$?\s*(\d[\d\s]{2,8})/i,
+    /(?:до|бюджет[уа]?|under|around|about|до\s*\$)\s*\$?\s*(\d[\d\s]{2,8})/i,
   );
   const usd = text.match(
     /\$\s*(\d[\d\s]{2,8})|(\d[\d\s]{4,8})\s*(?:\$|дол|usd)/i,
   );
-  const raw = until?.[1] ?? usd?.[1] ?? usd?.[2];
+  const bareBudget =
+    current.budgetMaxUsd == null
+      ? text.trim().match(/^\$?\s*(\d[\d\s]{4,8})\s*(?:\$|дол|usd)?[.!?]*$/i)
+      : null;
+  const raw = until?.[1] ?? usd?.[1] ?? usd?.[2] ?? bareBudget?.[1];
   if (raw) {
     const value = Number(raw.replace(/\s/g, ""));
     if (value >= 30_000 && value <= 2_000_000) {
@@ -70,26 +263,9 @@ export function extractPreferences(
     }
   }
 
-  if (/однокімнатн|однокомнатн|1\s*спальн|одну спальн|1\s*bed|one[-\s]?bed/.test(lower)) {
-    next.bedrooms = 1;
-  } else if (
-    /двокімнатн|двухкомнатн|2\s*спальн|дві спальн|дві кімнат|2\s*bed|two[-\s]?bed/.test(
-      lower,
-    )
-  ) {
-    next.bedrooms = 2;
-  } else if (
-    /трикімнатн|трехкомнатн|трикімнатн|3\s*спальн|три спальн|3\s*bed|three[-\s]?bed/.test(
-      lower,
-    )
-  ) {
-    next.bedrooms = 3;
-  } else if (
-    /чотирик|четырехкомнатн|4\s*спальн|чотири спальн|4\s*bed|four[-\s]?bed/.test(
-      lower,
-    )
-  ) {
-    next.bedrooms = 4;
+  const bedrooms = extractBedrooms(text, current);
+  if (bedrooms != null) {
+    next.bedrooms = bedrooms;
   }
 
   const area = lower.match(/від\s*(\d{2,3})\s*м|от\s*(\d{2,3})\s*м/);
@@ -97,20 +273,29 @@ export function extractPreferences(
     next.minAreaM2 = Number(area[1] ?? area[2]);
   }
 
-  for (const [alias, district] of Object.entries(DISTRICT_ALIASES)) {
-    if (lower.includes(alias)) {
+  for (const [alias, district] of DISTRICT_ALIASES) {
+    if (mentionsAlias(lower, alias)) {
       next.district = district;
+      next.anyDistrict = false;
       break;
     }
   }
 
-  if (/інвест|инвест|під дохід|под доход|для доходу|для дохода/.test(lower)) {
+  if (
+    /інвест|инвест|під дохід|под доход|для доходу|для дохода|invest|rental\s+income|for\s+income/.test(
+      lower,
+    )
+  ) {
     next.goal = "invest";
-  } else if (/дітям|детям|дитині|ребенк/.test(lower)) {
+  } else if (/дітям|детям|дитині|ребенк|family|with\s+(a\s+)?kid|child/.test(lower)) {
     next.goal = "family";
-  } else if (/переїзд|переезд/.test(lower)) {
+  } else if (/переїзд|переезд|relocat/.test(lower)) {
     next.goal = "relocate";
-  } else if (/для життя|для жизни|жити|жить|сім'?ї|семьи|семей/.test(lower)) {
+  } else if (
+    /для життя|для жизни|жити|жить|для себе|для себя|собі|себе|сім'?ї|семьи|семей|for\s+(myself|ourselves|living)|personal\s+use|to\s+live/.test(
+      lower,
+    )
+  ) {
     next.goal = "live";
   }
 
@@ -122,54 +307,17 @@ export function extractPreferences(
     next.anyDistrict = true;
   }
 
-  const phone = text.match(/(\+?380[\d\s()-]{8,14}|\b0\d{9}\b)/);
-  if (phone) {
-    const normalized = normalizeUaPhone(phone[1]);
-    if (isValidUaPhone(normalized)) {
-      next.phone = normalized;
-    }
-  }
-
-  const name =
-    text.match(/мене\s+звати\s+([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})/i) ||
-    text.match(/меня\s+зовут\s+([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})/i) ||
-    text.match(
-      /(?:^|\n)\s*(?:я\s+)?([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})\s*[,.]?\s*(?:\+?380|0\d)/i,
-    ) ||
-    text.match(
-      /(?:^|\n)\s*([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})\s*[.!,]\s+/u,
-    ) ||
-    text.match(
-      /ім'?я\s*[:\-]?\s*([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})/i,
-    ) ||
-    text.match(
-      /имя\s*[:\-]?\s*([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})/i,
-    );
-
-  if (name) {
-    const candidate = name[1];
-    if (
-      !/^(так|да|добре|хорошо|ок|завтра|сьогодні|сегодня|дзвінок|звонок|офіс|офис|онлайн|яка|какой|какая|мене|меня)$/i.test(
-        candidate,
-      )
-    ) {
-      next.name = candidate;
-    }
-  } else if (
-    current.bookingStatus === "collecting" &&
-    !current.name &&
-    /^[A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30}$/.test(text.trim())
-  ) {
-    next.name = text.trim();
-  }
+  next = ingestBookingDetails(text, next, next.lang ?? "uk");
 
   return next;
 }
 
-export function mentionedUnknownDistrict(text: string) {
+export function districtNamedIn(text: string) {
   const lower = text.toLowerCase();
-  const extras = ["солом'янка", "нивки", "шулявка", "деміївка", "соломьянка"];
-  return extras.find((name) => lower.includes(name));
+  for (const [alias, district] of DISTRICT_ALIASES) {
+    if (mentionsAlias(lower, alias)) return district;
+  }
+  return undefined;
 }
 
 export function allKnownDistricts() {
@@ -196,7 +344,7 @@ export function preferenceSummary(prefs: UserPreferences) {
     parts.push(goalMap[prefs.goal] ?? prefs.goal);
   }
   if (prefs.meetingType) parts.push(prefs.meetingType);
-  if (prefs.preferredSlotLabel) parts.push(prefs.preferredSlotLabel);
+  // Do not echo preferredSlotLabel in catalog intros — looks like invented time.
   return parts.join(", ");
 }
 

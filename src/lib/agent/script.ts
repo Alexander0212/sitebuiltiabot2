@@ -45,24 +45,28 @@ export function qualifyQuestion(slot: QualifySlot, prefs: UserPreferences) {
 export function closingQuestion(prefs: UserPreferences, count: number) {
   const lang = prefs.lang ?? "uk";
   if (!prefs.district && !prefs.anyDistrict) {
-    return lang === "ru"
-      ? "Какой район ближе, или сразу запишем короткий звонок?"
+    return lang === "en"
+      ? "Which district fits better, or shall we book a short call now?"
       : "Який район ближче, чи одразу запишемо короткий дзвінок?";
   }
 
   if (count === 1) {
-    return lang === "ru"
-      ? "Могу записать просмотр или короткий звонок. Как удобнее?"
+    return lang === "en"
+      ? "I can book a viewing or a short call. What works better?"
       : "Можу записати перегляд або короткий дзвінок. Як зручніше?";
   }
 
-  return lang === "ru"
-    ? "Могу коротко сравнить или записать на звонок/офис. Что удобнее?"
+  return lang === "en"
+    ? "I can briefly compare them or book a call or office visit. What is easier?"
     : "Можу коротко порівняти або записати на дзвінок/офіс. Що зручніше?";
 }
 
 export function presentListing(listing: CatalogListing) {
-  return `${listing.headline}: ${formatUsdSymbol(listing.priceUsd)}. ${listing.why} Деталі: /objects/${listing.slug}`;
+  const level =
+    listing.type === "house"
+      ? "будинок"
+      : `поверх ${listing.floorNumber}/${listing.floorsTotal}`;
+  return `${listing.headline}: ${formatUsdSymbol(listing.priceUsd)}, ${listing.bedrooms} спальні, ${listing.areaM2} м², ${level}. ${listing.why}`;
 }
 
 export function presentListings(listings: CatalogListing[]) {
@@ -75,7 +79,7 @@ export function compareListings(listings: CatalogListing[]) {
   }
 
   const [first, second] = listings;
-  return `${first.headline}: ${formatUsdSymbol(first.priceUsd)}, ${first.areaM2} м². ${first.why}\n\n${second.headline}: ${formatUsdSymbol(second.priceUsd)}, ${second.areaM2} м². ${second.why}`;
+  return `${presentListing(first)}\n\n${presentListing(second)}`;
 }
 
 export function isShowCardsIntent(text: string) {
