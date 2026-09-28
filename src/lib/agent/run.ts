@@ -25,6 +25,7 @@ import {
   meetingQuickReplies,
   nextBookingField,
   RESCHEDULE_RE,
+  rememberCallTime,
   scrubFalseBookingClaims,
   slotQuickReplies,
   tryApplyCallWindow,
@@ -586,6 +587,15 @@ export async function runAgent(
   );
 
   appendMessage(session, { role: "user", content: userText });
+
+  if (session.preferences.meetingType === "discuss" && !session.preferences.preferredTime) {
+    const recentUser = session.messages
+      .filter((message) => message.role === "user")
+      .slice(-6)
+      .reverse()
+      .map((message) => message.content);
+    session.preferences = rememberCallTime(session.preferences, recentUser, lang);
+  }
 
   const lastAssistant = previousAssistant;
 

@@ -98,7 +98,7 @@ function extractName(text: string, acceptBareName: boolean) {
 }
 
 export function assistantAskedForName(lastAssistant?: string) {
-  return /як до вас звертатися|how should i address|your name/i.test(
+  return /звертатися|як вас звати|ваше ім|your name|address you/i.test(
     lastAssistant || "",
   );
 }

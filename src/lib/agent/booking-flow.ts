@@ -93,7 +93,7 @@ export function extractMeetingType(text: string): MeetingType | undefined {
     return "online";
   }
   if (
-    /обговорити|обсудить|по\s+телефон|телефоном|телефонн|передзвон|перезвон|поговорити|поговорить|короткий\s+дзвінок|короткий\s+звонок|phone\s+call|by\s+phone|call\s+me/.test(
+    /обговорити|обсудить|по\s+телефон|телефоном|телефонн|зател|подзвон|передзвон|перезвон|наберіть|набери|поговорити|поговорить|короткий\s+дзвінок|короткий\s+звонок|phone\s+call|by\s+phone|call\s+me/.test(
       lower,
     )
   ) {
@@ -259,6 +259,32 @@ export function parseFlexibleCallTime(
       : `${dayWord} близько ${time}`;
 
   return { dateISO, time, label };
+}
+
+export function rememberCallTime(
+  prefs: UserPreferences,
+  texts: string[],
+  lang: AgentLang,
+): UserPreferences {
+  if (prefs.meetingType !== "discuss") return prefs;
+  if (prefs.preferredSlotLabel && prefs.preferredDate && prefs.preferredTime) {
+    return prefs;
+  }
+
+  for (const text of texts) {
+    const parsed = parseFlexibleCallTime(text, lang);
+    if (!parsed) continue;
+    return {
+      ...prefs,
+      preferredSlotId: `call:${parsed.dateISO}T${parsed.time}`,
+      preferredDate: parsed.dateISO,
+      preferredTime: parsed.time,
+      preferredSlotLabel: parsed.label,
+      offeredSlots: undefined,
+    };
+  }
+
+  return prefs;
 }
 
 export function tryApplyCallWindow(
