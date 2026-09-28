@@ -32,6 +32,7 @@ import {
 } from "@/lib/agent/booking-flow";
 import { getUpcomingSlots, matchSlotChoice } from "@/lib/agent/schedule";
 import {
+  assistantAskedForName,
   districtNamedIn,
   extractPreferences,
   ingestBookingDetails,
@@ -40,6 +41,7 @@ import {
   isHandoffIntent,
   isOfficeInfoQuestion,
   isOutOfScopeIntent,
+  isReservedLabel,
   isSideQuestionDuringBooking,
   isUpperFloorIntent,
   preferenceSummary,
@@ -560,7 +562,12 @@ export async function runAgent(
     userText,
     session.preferences,
     lang,
+    assistantAskedForName(previousAssistant),
   );
+
+  if (isReservedLabel(session.preferences.name)) {
+    session.preferences.name = undefined;
+  }
 
   if (RESCHEDULE_RE.test(userText) && session.preferences.bookingStatus === "submitted") {
     session.preferences.preferredSlotId = undefined;

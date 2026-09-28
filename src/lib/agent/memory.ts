@@ -69,7 +69,7 @@ function extractPhone(text: string) {
   return isValidUaPhone(normalized) ? normalized : undefined;
 }
 
-function extractName(text: string, bookingCollecting: boolean) {
+function extractName(text: string, acceptBareName: boolean) {
   const beforePhone = text.match(
     /([A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30})\s*[,.]?\s*(?:\+?380\d{9}|0\d{9}|\d{9})\b/u,
   );
@@ -85,11 +85,26 @@ function extractName(text: string, bookingCollecting: boolean) {
     return candidate;
   }
 
-  if (bookingCollecting && /^[A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30}$/u.test(text.trim())) {
-    return text.trim();
+  const bare = text.trim();
+  if (
+    acceptBareName &&
+    /^[A-Za-zА-Яа-яЇїІіЄєҐґЁё'\-]{2,30}$/u.test(bare) &&
+    !NAME_STOP.test(bare)
+  ) {
+    return bare;
   }
 
   return undefined;
+}
+
+export function assistantAskedForName(lastAssistant?: string) {
+  return /як до вас звертатися|how should i address|your name/i.test(
+    lastAssistant || "",
+  );
+}
+
+export function isReservedLabel(value?: string) {
+  return Boolean(value && NAME_STOP.test(value.trim()));
 }
 
 /**
@@ -100,12 +115,13 @@ export function ingestBookingDetails(
   text: string,
   current: UserPreferences,
   lang: AgentLang = "uk",
+  acceptBareName = false,
 ): UserPreferences {
   const next = { ...current };
   const phone = extractPhone(text);
   if (phone) next.phone = phone;
 
-  const name = extractName(text, current.bookingStatus === "collecting");
+  const name = extractName(text, acceptBareName);
   if (name) next.name = name;
 
   const hasContactSignal = Boolean(phone || name || /\b([01]?\d|2[0-3])[:.][0-5]\d\b/.test(text));
